@@ -1,116 +1,126 @@
 # -*- coding: utf-8 -*-
 require "yaml"
-class BackgroundBoard
+class BackEnd
 
-  attr_accessor :grid
+  attr_accessor :background_array
 
-  def initialize(ui, mode)
-    @ui = ui
-    @grid = []
-    build_grid(mode)
+  def initialize(difficulty_values)
+    @background_array = []
+    build_background_array(difficulty_values)
   end
 
-  def build_grid(mode)
-    mode[1].times { @grid << Array.new(mode[0], nil) }
-    mine_setup(mode)
-    fringe_setup
-  end
+  def iterate_on_fringe(coordinates, &prc)
+    (coordinates[0] - 1).upto(coordinates[0] + 1) do |i|
+      next if i < 0 || i > (@background_array.count - 1)
+      (coordinates[1] - 1).upto(coordinates[1] + 1) do |j|
+        next if j < 0 || j > (@background_array.count - 1)
 
-  def reveal(coordinates)
-    case @grid[coordinates[0]][coordinates[1]]
-    when :bomb
-      @ui.display_bomb(coordinates)
-    when nil
-      @ui.add_number(coordinates)
-
-      (coordinates[0] - 1).upto(coordinates[0] + 1) do |i|
-        next if i < 0 || i > (@grid.count - 1)
-
-        (coordinates[1] - 1).upto(coordinates[1] + 1) do |j|
-          next if j < 0 || j > (@grid.count - 1)
-
-          reveal([i,j]) if @ui.user_grid[i][j] == "🐨"
-        end
+        prc.call(i,j)
       end
-    else
-      @ui.add_number(coordinates)
     end
   end
 
-  def mine_setup(mode)
-    mode[2].times do
-      bomb_space = 0
+  private
+
+  def build_background_array(difficulty_values)
+    difficulty_values[1].times do
+       @background_array << Array.new(difficulty_values[0], nil)
+    end
+
+    setup_mines(difficulty_values)
+    setup_fringe
+  end
+
+  def setup_mines(difficulty_values)
+    difficulty[2].times do
+      bomb_space = true
       while bomb_space do
-        row, col = rand(mode[1]), rand(mode[0])
-        bomb_space = @grid[row][col]
+        row, col = rand(difficulty_values[1]), rand(difficulty_values[0])
+        bomb_space = @background_array[row][col]
       end
-      @grid[row][col] = :bomb
-    end
 
+      @background_array[row][col] = :bomb
+    end
   end
+
   #gives number of bombs around a fringe space
-  def fringe_setup
-    @grid.each_with_index do |row, index1|
+  def setup_fringe
+    @background_array.each_with_index do |row, index1|
       row.each_with_index do |space, index2|
         next if space == :bomb
 
-        @grid[index1][index2] = adjacent_bombs(index1, index2)
+        @background_array[index1][index2] = count_adjacent_bombs(index1, index2)
       end
     end
-
   end
 
-  def adjacent_bombs(index1, index2)
+  def count_adjacent_bombs(index1, index2)
     number_of_bombs = 0
-    (index1 - 1).upto(index1 + 1) do |i|
-      next if i < 0 || i > (@grid.count - 1)
 
-      (index2 - 1).upto(index2 + 1) do |j|
-        next if j < 0 || j > (@grid.count - 1)
-
-        number_of_bombs += 1 if @grid[i][j] == :bomb
-      end
+    iterate_on_fringe([index1, index2]) do |i, j|
+      number_of_bombs += 1 if @background_array[i][j] == :bomb
     end
-    return number_of_bombs.zero? ? nil : number_of_bombs
+
+    number_of_bombs.zero? ? nil : number_of_bombs
   end
 end
 
-class UI
+class UserInterface
 
-  attr_accessor :user_grid
+  attr_accessor :foreground_array
 
   def initialize
-    @user_grid = []
+    @foreground_array = []
   end
 
   def run
-    puts "Welcome to MineSweeper!"
-    puts "Enter game mode: easy, medium, or expert"
-    mode_hash = {"easy" => [9,9,10],
-                 "medium" => [16,16,40],
-                 "expert" => [30,16,99]}
-
-    @mode = mode_hash[gets.downcase.strip]
-
-    build_grid
-    @board = BackgroundBoard.new(self, @mode)
-
+    starting_prompt
+    build_foreground_array
+    make_back_end
     display_user_board
 
     until done?
-      execute_entry(prompt_user) #prompt user returns valid_entry
+      execute_entry(prompt)
       display_user_board
     end
-    give_results #end game results
+
+    give_results
     display_user_board
-    nil
   end
 
-  def build_grid
-    @mode[1].times { @user_grid << Array.new(@mode[0], "🐨") }
+  def starting_prompt
+    puts "Welcome to MineSweeper!"
+    puts "Enter game difficulty: easy, medium, or expert"
+
+    #[width,height,number of bombs]
+    difficulty_hash = {"easy" => [9,9,10],
+                 "medium" => [16,16,40],
+                 "expert" => [30,16,99]}
+
+    @difficulty_values = difficulty_hash[gets.downcase.strip]
   end
 
-  def prompt_user
+  def make_back_end
+    @back_end = BackEnd.new(self, @difficulty_values)
+  end
+
+  def reveal(coordinates)
+    display_element(coordinates)
+
+    if (@back_end.background_array[coordinates[0]][coordinates[1]]).nil?
+      @back_end.iterate_on_fringe(coordinates) do |i, j|
+        reveal([i,j]) if @foreground_array[i][j] == "🐨"
+      end
+    end
+  end
+
+  def build_foreground_array
+    @difficulty_values[1].times do
+      @foreground_array << Array.new(@difficulty_values[0], "🐨")
+    end
+  end
+
+  def prompt
     valid_entry = nil
     until valid_entry
       puts "Input \"r\" to reveal or \"f\" to flag, " +
@@ -127,12 +137,12 @@ class UI
     return "load" if entry[0] == "load"
 
     if ["r","f"].include?(entry[0])
-      if ("0"..((@mode[0]-1).to_s)).include?(entry[1]) &&
-         ("0"..((@mode[1]-1).to_s)).include?(entry[2])
+      if ("0"..((@difficulty_values[0]-1).to_s)).include?(entry[1]) &&
+         ("0"..((@difficulty_values[1]-1).to_s)).include?(entry[2])
         return entry
       else
-        puts "Make sure coordinates are between 0 and #{@mode[0]} or " +
-              "0 and #{@mode[1]}."
+        puts "Make sure coordinates are between 0 and " +
+             "#{@difficulty_values[0]} or 0 and #{@difficulty_values[1]}."
       end
     else
       puts "Precede your coordinates with \"r\" to reveal or \"f\" to flag."
@@ -146,42 +156,43 @@ class UI
     command = valid_entry[0]
     coordinates = valid_entry[1..2].reverse.map(&:to_i)
     if command[0] == "r"
-      if @user_grid[coordinates[0]][coordinates[1]] == "📮"
+      if flagged?(coordinates)
         puts "You must unflag this space before revealing it."
-        execute_entry(prompt_user)
+        execute_entry(prompt)
       else
-        @board.reveal(coordinates)
+        reveal(coordinates)
       end
     end
 
     flag(coordinates) if command[0] == "f"
   end
 
+  def flagged?(coordinates)
+    @foreground_array[coordinates[0]][coordinates[1]] == "📮"
+  end
+
   def flag(coordinates)
-    if @user_grid[coordinates[0]][coordinates[1]] == "📮"
-      @user_grid[coordinates[0]][coordinates[1]] = "🐨"
+    if flagged?(coordinates)
+      @foreground_array[coordinates[0]][coordinates[1]] = "🐨"
     else
-      @user_grid[coordinates[0]][coordinates[1]] = "📮"
+      @foreground_array[coordinates[0]][coordinates[1]] = "📮"
     end
   end
 
-  def display_bomb(coords)
-    @user_grid[coords[0]][coords[1]] = "💣"
-  end
+  def display_element(coords)
+    element_hash = {:bomb => "💣", nil => "_",
+      1 => 1, 2 => 2, 3 => 3, 4 => 4,
+      5 => 5, 6 => 6, 7 => 7, 8 => 8}
 
-  def add_number(coords)
-     if @board.grid[coords[0]][coords[1]].nil?
-       @user_grid[coords[0]][coords[1]] = "_"
-     else
-       @user_grid[coords[0]][coords[1]] = @board.grid[coords[0]][coords[1]]
-     end
+    key = @back_end.background_array[coords[0]][coords[1]]
+    @foreground_array[coords[0]][coords[1]] = element_hash[key]
   end
 
   def display_user_board
     puts "   " + (0...9).to_a.join("  ") + "   " +
-         (9...@user_grid[0].count).to_a.join(" ")
+         (9...@foreground_array[0].count).to_a.join(" ")
 
-    @user_grid.each_with_index do |row, index|
+    @foreground_array.each_with_index do |row, index|
       puts " #{index} #{row.join("  ")}" if index < 10
       puts "#{index} #{row.join("  ")}" if index >= 10
     end
@@ -193,16 +204,16 @@ class UI
 
   def won?
     unexpored_spaces = 0
-    @user_grid.each do |row|
+    @foreground_array.each do |row|
       row.each do |space|
         unexpored_spaces += 1 if space == "🐨" || space == "📮"
       end
     end
-    unexpored_spaces == @mode[2]
+    unexpored_spaces == @difficulty_values[2]
   end
 
   def lost?
-    @user_grid.any?{|row| row.any?{|space| space == "💣"}}
+    @foreground_array.any?{|row| row.any?{|space| space == "💣"}}
   end
 
   def give_results
@@ -215,15 +226,15 @@ class UI
   end
 
   def reveal_all_bombs
-    @board.grid.each_with_index do |row, index1|
+    @back_end.background_array.each_with_index do |row, index1|
       row.each_with_index do |space, index2|
-        @board.reveal([index1, index2]) if space == :bomb
+        reveal([index1, index2]) if space == :bomb
       end
     end
   end
 
   def save
-    gamestate = [@board.grid, user_grid].to_yaml
+    gamestate = [@back_end.background_array, @foreground_array].to_yaml
     puts "You're saving your current game. Enter a file name (no extension):"
     filename = gets.chomp.downcase
     File.open("#{filename}.txt", "w") {|f| f.puts gamestate}
@@ -234,12 +245,14 @@ class UI
     filename = gets.chomp.downcase
     loaded_file = File.read("#{filename}.txt")
     object_array = YAML::load(loaded_file)
-    @board.grid, @user_grid = object_array[0], object_array[1]
+    @back_end.background_array = object_array[0]
+    @foreground_array = object_array[1]
   end
 end
+
 #for running from command line, not in irb
 if __FILE__ == $PROGRAM_NAME
-  game = UI.new
+  game = UserInterface.new
   game.run
 end
 
